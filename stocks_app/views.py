@@ -246,7 +246,9 @@ def get_user_stocks(request):
 @api_view(['POST'])
 def create_group(request):
     group_name = request.data.get('group_name')
-    
+    user_id=request.data.get('user_id')
+    user=AppUser.objects.get(user_id=user_id)
+
     if not group_name:
         return Response(
             {"error": "Group name is required"}, 
@@ -261,6 +263,7 @@ def create_group(request):
     
     try:
         group = Group.objects.create(group_name=group_name)
+        UserGroup.objects.create(user=user, group=group)
         return Response(
             {
                 "message": "Group created successfully",
@@ -269,6 +272,7 @@ def create_group(request):
             },
             status=status.HTTP_201_CREATED
         )
+        
     except Exception as e:
         return Response(
             {"error": "Failed to create group", "details": str(e)},
@@ -278,17 +282,17 @@ def create_group(request):
 @api_view(['POST'])
 def join_group(request):
     user_id = request.data.get('user_id')
-    group_id = request.data.get('group_id')
+    group_name = request.data.get('group_name')
     
-    if not user_id or not group_id:
+    if not user_id or not group_name:
         return Response(
             {"error": "Missing required parameters"}, 
             status=status.HTTP_400_BAD_REQUEST
         )
     
     try:
-        user = User.objects.get(id=user_id)
-        group = Group.objects.get(id=group_id)
+        user = AppUser.objects.get(user_id=user_id)
+        group = Group.objects.get(group_name=group_name)
     except User.DoesNotExist:
         return Response(
             {"error": "User not found"}, 
@@ -313,9 +317,9 @@ def join_group(request):
     )
 
 @api_view(['GET'])
-def get_grp_leaderboard(request, group_id):
+def get_grp_leaderboard(request, group_name):
     try:
-        group = Group.objects.get(id=group_id)
+        group = Group.objects.get(group_name=group_name)
     except Group.DoesNotExist:
         return Response(
             {"error": "Group not found"}, 
@@ -323,7 +327,31 @@ def get_grp_leaderboard(request, group_id):
         )
     
     leaderboard = UserGroup.objects.filter(group=group).order_by('-current_balance')
-    result = [{"user": ug.user.username, "portfolio_value": float(ug.current_balance)} for ug in leaderboard]
+    result = []
+    
+    for ug in leaderboard:
+        # Get the last trade for this user in this group
+        last_trade = Transaction.objects.filter(
+            user=ug.user,
+            group=group
+        ).order_by('-timestamp').first()
+        
+        user_data = {
+            "user": ug.user.name,
+            "portfolio_value": float(ug.current_balance)
+        }
+        
+        # Add last trade information if it exists
+        if last_trade:
+            user_data["last_trade"] = {
+                "action": last_trade.action,
+                "ticker": last_trade.ticker,
+                "quantity": last_trade.quantity,
+                "price": float(last_trade.price),
+                "timestamp": last_trade.timestamp
+            }
+        
+        result.append(user_data)
     
     return Response(result, status=status.HTTP_200_OK)
 
@@ -404,3 +432,29 @@ def get_user_transactions(request, user_id, group_id):
             {"error": f"An error occurred: {str(e)}"}, 
             status=status.HTTP_500_INTERNAL_SERVER_ERROR
         )
+    
+@api_view(['GET'])
+def get_groups(request, user_id):
+        try:
+            user = AppUser.objects.get(user_id=user_id)
+            user_groups = UserGroup.objects.filter(user=user)
+            
+            # Serialize the groups data
+            groups_data = [{
+                'group_id': ug.group.id,
+                'group_name': ug.group.group_name,
+                'current_balance': float(ug.current_balance)
+            } for ug in user_groups]
+            
+            return Response(groups_data, status=status.HTTP_200_OK)
+        except AppUser.DoesNotExist:
+            return Response(
+                {"error": "User not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"An error occurred: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
