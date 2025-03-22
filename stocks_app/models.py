@@ -52,7 +52,7 @@ class Transaction(models.Model):
     
 
     def __str__(self):
-        return f"{self.user.username} {self.action} {self.quantity} {self.ticker} @ INR {self.price}"
+        return f"{self.user.name} {self.action} {self.quantity} {self.ticker} @ INR {self.price}"
 
 
 
