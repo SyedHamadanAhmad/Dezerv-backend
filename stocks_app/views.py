@@ -2,12 +2,15 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from decimal import Decimal
-from .models import UserGroup, Transaction, Group
+from .models import UserGroup, Transaction, Group, StockData
 from django.contrib.auth.models import User
 import requests
 import os
+from .utils import initialise_db
 from nsetools import Nse
 from collections import defaultdict
+API_KEY = "2NKGY1LYTK34VW95"
+BASE_URL = "https://www.alphavantage.co/query"
 
 nse=Nse()
 
@@ -123,3 +126,95 @@ def get_user_stocks(request):
                 del stock_holdings[ticker]
     return Response(list(stock_holdings.values()))
 
+
+@api_view(['POST'])
+def create_group(request):
+    group_name = request.data.get('group_name')
+    
+    if not group_name:
+        return Response({"error": "Group name is required"}, status=400)
+    
+    if Group.objects.filter(group_name=group_name).exists():
+        return Response({"error": "Group name already exists"}, status=400)
+    
+    group = Group.objects.create(group_name=group_name)
+    return Response({"message": "Group created successfully", "group_id": group.id})
+
+@api_view(['POST'])
+def join_group(request):
+    user_id = request.data.get('user_id')
+    group_id = request.data.get('group_id')
+    
+    try:
+        user = User.objects.get(id=user_id)
+        group = Group.objects.get(id=group_id)
+    except User.DoesNotExist:
+        return Response({"error": "User not found"}, status=404)
+    except Group.DoesNotExist:
+        return Response({"error": "Group not found"}, status=404)
+    
+    if UserGroup.objects.filter(user=user, group=group).exists():
+        return Response({"error": "User already in group"}, status=400)
+    
+    UserGroup.objects.create(user=user, group=group)
+    return Response({"message": "User joined group successfully"})
+
+@api_view(['GET'])
+def get_grp_leaderboard(request, group_id):
+    try:
+        group = Group.objects.get(id=group_id)
+    except Group.DoesNotExist:
+        return Response({"error": "Group not found"}, status=404)
+    
+    leaderboard = UserGroup.objects.filter(group=group).order_by('-current_balance')
+    result = [{"user": ug.user.username, "portfolio_value": float(ug.current_balance)} for ug in leaderboard]
+    
+    return Response(result)
+
+@api_view(['GET'])
+def init_db(request):
+    initialise_db()
+    return Response("Done")
+    
+
+@api_view(['GET'])
+def get_last_trade(request, group_id):
+    
+    
+    transactions = Transaction.objects.filter(group_id=group_id).order_by('-timestamp')
+    
+    if transactions.exists():
+        last_trade = transactions.first()
+        result = {
+            "user": last_trade.user.username,
+            "action": last_trade.action,
+            "ticker": last_trade.ticker,
+            "quantity": last_trade.quantity,
+            "price": float(last_trade.price),
+            "timestamp": last_trade.timestamp
+        }
+        return Response(result)
+    else:
+        return Response({"message": "No trades found for this user in this group"}, status=404)
+
+@api_view(['GET'])
+def get_user_transactions(request, user_id, group_id):
+    
+    transactions = Transaction.objects.filter(user_id=user_id).order_by('-timestamp')
+    
+    if not transactions.exists():
+        return Response({"message": "No transactions found for this user"}, status=404)
+    
+    result = [
+        {
+            "action": txn.action,
+            "ticker": txn.ticker,
+            "quantity": txn.quantity,
+            "price": float(txn.price),
+            "total_price": float(txn.total_price),
+            "timestamp": txn.timestamp
+        }
+        for txn in transactions
+    ]
+    
+    return Response(result)

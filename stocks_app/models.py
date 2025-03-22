@@ -1,13 +1,15 @@
 from django.db import models
-from django.contrib.auth.models import User
 from decimal import Decimal
 import requests
 
-from nsetools import Nse
-nse=Nse()
 
-API_KEY = "2NKGY1LYTK34VW95"
-BASE_URL = "https://www.alphavantage.co/query"
+
+class AppUser(models.Model):
+    user_id=models.CharField(max_length=150, unique=True)
+    name=models.CharField(max_length=150)
+    
+    def __str__(self):
+        return self.name
 
 class Group(models.Model):
     group_name = models.CharField(max_length=100, unique=True)  # Prevent duplicate group names
@@ -18,7 +20,7 @@ class Group(models.Model):
 
 
 class UserGroup(models.Model):  # Renamed for better readability
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="user_groups")
+    user = models.ForeignKey(AppUser, on_delete=models.CASCADE, related_name="user_groups")
     group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name="group_users")
     current_balance = models.DecimalField(max_digits=15, decimal_places=2, default=Decimal("10000.00"))
     joined_at = models.DateTimeField(auto_now_add=True)
@@ -27,7 +29,7 @@ class UserGroup(models.Model):  # Renamed for better readability
         unique_together = ("user", "group")
 
     def __str__(self):
-        return f"{self.user.username} in {self.group.group_name}"
+        return f"{self.user.name} in {self.group.group_name}"
 
 
 class Transaction(models.Model):
@@ -38,7 +40,7 @@ class Transaction(models.Model):
         (SELL, "Sell"),
     ]
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="transactions")
+    user = models.ForeignKey(AppUser, on_delete=models.CASCADE, related_name="transactions")
     group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name="transactions")
     action = models.CharField(max_length=4, choices=ACTION_CHOICES)
     ticker = models.CharField(max_length=20)
@@ -55,8 +57,17 @@ class Transaction(models.Model):
 
 
 
+class StockData(models.Model):
+    ticker = models.CharField(max_length=10)  # Stock symbol
+    datetime = models.DateTimeField()  # Shifted timestamp
+    open_price = models.FloatField()
+    high_price = models.FloatField()
+    low_price = models.FloatField()
+    close_price = models.FloatField()
+    volume = models.BigIntegerField()
 
-
+    def __str__(self):
+        return f"{self.ticker} - {self.datetime}"
 
 
 
