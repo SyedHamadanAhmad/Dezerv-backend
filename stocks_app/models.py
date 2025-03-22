@@ -59,7 +59,7 @@ class Transaction(models.Model):
 
 class StockData(models.Model):
     ticker = models.CharField(max_length=10)  # Stock symbol
-    datetime = models.DateTimeField()  # Shifted timestamp
+    datetime = models.BigIntegerField()  # Shifted timestamp
     open_price = models.FloatField()
     high_price = models.FloatField()
     low_price = models.FloatField()
