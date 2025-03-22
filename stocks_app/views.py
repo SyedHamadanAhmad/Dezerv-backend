@@ -11,16 +11,25 @@ from collections import defaultdict
 from rest_framework import status
 
 
+@api_view(['GET'])
+def get_users(request):
+    try:
+        users=AppUser.objects.all().values()
+        return Response(users)
+    except Exception as e:
+        return Response("Error")
+
+
 @api_view(['POST'])
 def buy_stock(request):
     try:
         user_id = request.data.get("user_id")
-        group_id = request.data.get("group_id")
+        group_name = request.data.get("group_name")
         ticker = request.data.get("ticker")
         quantity = request.data.get("quantity")
         timestamp = request.data.get("timestamp")  # Unix timestamp
 
-        if not user_id or not group_id or not ticker or not quantity or not timestamp:
+        if not user_id or not group_name or not ticker or not quantity or not timestamp:
             return Response(
                 {"error": "Missing required parameters"}, 
                 status=status.HTTP_400_BAD_REQUEST
@@ -40,8 +49,8 @@ def buy_stock(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        user = get_object_or_404(AppUser, id=user_id)
-        group = get_object_or_404(Group, id=group_id)
+        user = get_object_or_404(AppUser, user_id=user_id)
+        group = get_object_or_404(Group, group_name=group_name)
         user_group = get_object_or_404(UserGroup, user=user, group=group)
 
         # Get the closest stock price for the given timestamp
@@ -97,12 +106,12 @@ def buy_stock(request):
 def sell_stock(request):
     try:
         user_id = request.data.get("user_id")
-        group_id = request.data.get("group_id")
+        group_name = request.data.get("group_name")
         ticker = request.data.get("ticker")
         timestamp = request.data.get("timestamp")
         quantity = request.data.get("quantity")
 
-        if not user_id or not group_id or not ticker or not timestamp or not quantity:
+        if not user_id or not group_name or not ticker or not timestamp or not quantity:
             return Response(
                 {"error": "Missing required parameters"}, 
                 status=status.HTTP_400_BAD_REQUEST
@@ -122,8 +131,8 @@ def sell_stock(request):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        user = get_object_or_404(AppUser, id=user_id)
-        group = get_object_or_404(Group, id=group_id)
+        user = get_object_or_404(AppUser, user_id=user_id)
+        group = get_object_or_404(Group, group_name=group_name)
         user_group = get_object_or_404(UserGroup, user=user, group=group)
 
         # Check if user has enough stocks to sell
@@ -325,23 +334,42 @@ def get_grp_leaderboard(request, group_name):
             {"error": "Group not found"}, 
             status=status.HTTP_404_NOT_FOUND
         )
-    
+
     leaderboard = UserGroup.objects.filter(group=group).order_by('-current_balance')
     result = []
-    
+
     for ug in leaderboard:
-        # Get the last trade for this user in this group
-        last_trade = Transaction.objects.filter(
-            user=ug.user,
-            group=group
-        ).order_by('-timestamp').first()
+        user_assets = {}
+
+        # Get all transactions for this user in the group
+        transactions = Transaction.objects.filter(user=ug.user, group=group)
         
+        # Calculate total quantity owned per stock
+        for tx in transactions:
+            if tx.action == "buy":
+                user_assets[tx.ticker] = user_assets.get(tx.ticker, 0) + tx.quantity
+            elif tx.action == "sell":
+                user_assets[tx.ticker] = user_assets.get(tx.ticker, 0) - tx.quantity
+
+        # Remove stocks with 0 or negative quantity
+        user_assets = {ticker: qty for ticker, qty in user_assets.items() if qty > 0}
+
+        # Calculate total asset value
+        asset_value = Decimal(0)
+        for ticker, quantity in user_assets.items():
+            latest_stock = StockData.objects.filter(ticker=ticker).order_by('-datetime').first()
+            if latest_stock:
+                asset_value += Decimal(quantity) * Decimal(latest_stock.close_price)
+
         user_data = {
             "user": ug.user.name,
-            "portfolio_value": float(ug.current_balance)
+            "portfolio_value": float(ug.current_balance),
+            "asset_value": float(asset_value),
+            "total_value": float(ug.current_balance + asset_value)  # Total balance including assets
         }
-        
-        # Add last trade information if it exists
+
+        # Get last trade information
+        last_trade = transactions.order_by('-timestamp').first()
         if last_trade:
             user_data["last_trade"] = {
                 "action": last_trade.action,
@@ -350,9 +378,9 @@ def get_grp_leaderboard(request, group_name):
                 "price": float(last_trade.price),
                 "timestamp": last_trade.timestamp
             }
-        
+
         result.append(user_data)
-    
+
     return Response(result, status=status.HTTP_200_OK)
 
 @api_view(['GET'])
@@ -436,8 +464,14 @@ def get_user_transactions(request, user_id, group_id):
 @api_view(['GET'])
 def get_groups(request, user_id):
         try:
+            print(f"Looking for user with user_id: {user_id}")  # Debug log
+            print(f"All users in database: {list(AppUser.objects.values('user_id', 'name'))}")  # Debug log
+            
             user = AppUser.objects.get(user_id=user_id)
+            print(f"Found user: {user.name}")  # Debug log
+            
             user_groups = UserGroup.objects.filter(user=user)
+            print(f"User groups: {list(user_groups.values())}")  # Debug log
             
             # Serialize the groups data
             groups_data = [{
